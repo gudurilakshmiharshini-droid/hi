@@ -1,0 +1,614 @@
+from flask import Flask, render_template, request, jsonify
+from werkzeug.utils import secure_filename
+import os
+import re
+from PyPDF2 import PdfReader
+from docx import Document
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXTENSIONS = {"pdf", "docx"}
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+# --------------------------------------------------
+# SAMPLE JOB DATABASE
+# --------------------------------------------------
+
+jobs = [
+    {
+        "id": 1,
+        "title": "Python Developer",
+        "company": "ABC Technologies",
+        "location": "Hyderabad",
+        "required_skills": [
+            "python",
+            "sql",
+            "git",
+            "django",
+            "rest api"
+        ],
+        "preferred_skills": [
+            "html",
+            "css",
+            "javascript"
+        ],
+        "experience": "0-2 years",
+        "salary": "₹4-8 LPA",
+        "type": "Full Time"
+    },
+
+    {
+        "id": 2,
+        "title": "Frontend Developer",
+        "company": "Tech Solutions",
+        "location": "Bangalore",
+        "required_skills": [
+            "html",
+            "css",
+            "javascript",
+            "react"
+        ],
+        "preferred_skills": [
+            "git",
+            "bootstrap"
+        ],
+        "experience": "0-2 years",
+        "salary": "₹4-7 LPA",
+        "type": "Full Time"
+    },
+
+    {
+        "id": 3,
+        "title": "Data Analyst",
+        "company": "DataWorks",
+        "location": "Chennai",
+        "required_skills": [
+            "python",
+            "sql",
+            "excel",
+            "statistics"
+        ],
+        "preferred_skills": [
+            "power bi",
+            "tableau"
+        ],
+        "experience": "0-2 years",
+        "salary": "₹4-9 LPA",
+        "type": "Full Time"
+    },
+
+    {
+        "id": 4,
+        "title": "Software Engineer",
+        "company": "Innovate Labs",
+        "location": "Pune",
+        "required_skills": [
+            "c",
+            "python",
+            "java",
+            "sql",
+            "git"
+        ],
+        "preferred_skills": [
+            "data structures",
+            "algorithms"
+        ],
+        "experience": "0-2 years",
+        "salary": "₹5-10 LPA",
+        "type": "Full Time"
+    }
+]
+
+
+# --------------------------------------------------
+# ALLOWED FILE CHECK
+# --------------------------------------------------
+
+def allowed_file(filename):
+    return (
+        "." in filename
+        and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    )
+
+
+# --------------------------------------------------
+# EXTRACT TEXT FROM PDF
+# --------------------------------------------------
+
+def extract_pdf_text(filepath):
+
+    text = ""
+
+    reader = PdfReader(filepath)
+
+    for page in reader.pages:
+        page_text = page.extract_text()
+
+        if page_text:
+            text += page_text + "\n"
+
+    return text
+
+
+# --------------------------------------------------
+# EXTRACT TEXT FROM DOCX
+# --------------------------------------------------
+
+def extract_docx_text(filepath):
+
+    document = Document(filepath)
+
+    text = []
+
+    for paragraph in document.paragraphs:
+        text.append(paragraph.text)
+
+    return "\n".join(text)
+
+
+# --------------------------------------------------
+# RESUME TEXT EXTRACTION
+# --------------------------------------------------
+
+def extract_resume_text(filepath):
+
+    extension = filepath.rsplit(".", 1)[1].lower()
+
+    if extension == "pdf":
+        return extract_pdf_text(filepath)
+
+    elif extension == "docx":
+        return extract_docx_text(filepath)
+
+    return ""
+
+
+# --------------------------------------------------
+# SKILLS DATABASE
+# --------------------------------------------------
+
+SKILLS = [
+    "python",
+    "java",
+    "c",
+    "c++",
+    "javascript",
+    "html",
+    "css",
+    "react",
+    "bootstrap",
+    "sql",
+    "mysql",
+    "git",
+    "github",
+    "django",
+    "flask",
+    "rest api",
+    "excel",
+    "statistics",
+    "power bi",
+    "tableau",
+    "machine learning",
+    "data structures",
+    "algorithms",
+    "mongodb",
+    "node.js"
+]
+
+
+# --------------------------------------------------
+# EXTRACT SKILLS
+# --------------------------------------------------
+
+def extract_skills(text):
+
+    text = text.lower()
+
+    detected = []
+
+    for skill in SKILLS:
+
+        if skill in text:
+            detected.append(skill)
+
+    return list(set(detected))
+
+
+# --------------------------------------------------
+# EXTRACT BASIC INFORMATION
+# --------------------------------------------------
+
+def extract_name(text):
+
+    lines = [
+        line.strip()
+        for line in text.split("\n")
+        if line.strip()
+    ]
+
+    if len(lines) > 0:
+        return lines[0]
+
+    return "Candidate"
+
+
+def extract_education(text):
+
+    education_keywords = [
+        "b.tech",
+        "btech",
+        "b.e",
+        "bachelor",
+        "degree",
+        "m.tech",
+        "mtech",
+        "mba",
+        "b.sc",
+        "m.sc"
+    ]
+
+    found = []
+
+    for line in text.split("\n"):
+
+        lower_line = line.lower()
+
+        for keyword in education_keywords:
+
+            if keyword in lower_line:
+                found.append(line.strip())
+                break
+
+    return found[:5]
+
+
+# --------------------------------------------------
+# JOB MATCHING
+# --------------------------------------------------
+
+def calculate_match(resume_skills, job):
+
+    required = set(job["required_skills"])
+    preferred = set(job["preferred_skills"])
+    resume = set(resume_skills)
+
+    matched_required = resume.intersection(required)
+    matched_preferred = resume.intersection(preferred)
+
+    missing_required = required - resume
+
+    required_score = 0
+
+    preferred_score = 0
+
+    if required:
+        required_score = (
+            len(matched_required) / len(required)
+        ) * 80
+
+    if preferred:
+        preferred_score = (
+            len(matched_preferred) / len(preferred)
+        ) * 20
+
+    score = round(required_score + preferred_score)
+
+    return {
+        "score": score,
+        "matched": sorted(
+            list(matched_required.union(matched_preferred))
+        ),
+        "missing": sorted(list(missing_required))
+    }
+
+
+# --------------------------------------------------
+# LEARNING ROADMAP
+# --------------------------------------------------
+
+def generate_roadmap(missing_skills):
+
+    roadmap = []
+
+    skill_groups = {
+        "python": "Python fundamentals and object-oriented programming",
+        "sql": "SQL and database fundamentals",
+        "git": "Git and GitHub",
+        "django": "Django web development",
+        "rest api": "REST API development",
+        "javascript": "JavaScript fundamentals",
+        "react": "React.js",
+        "html": "HTML fundamentals",
+        "css": "CSS and responsive design",
+        "java": "Java programming",
+        "c": "C programming fundamentals",
+        "data structures": "Data Structures",
+        "algorithms": "Algorithms",
+        "excel": "Advanced Excel",
+        "statistics": "Statistics fundamentals",
+        "power bi": "Power BI",
+        "tableau": "Tableau"
+    }
+
+    for skill in missing_skills[:8]:
+
+        if skill in skill_groups:
+            roadmap.append(skill_groups[skill])
+        else:
+            roadmap.append(
+                skill.title() + " fundamentals"
+            )
+
+    return roadmap
+
+
+# --------------------------------------------------
+# RESUME IMPROVEMENT
+# --------------------------------------------------
+
+def resume_suggestions(text, skills):
+
+    suggestions = []
+
+    if len(text) < 500:
+        suggestions.append(
+            "Your resume appears short. Add relevant projects, "
+            "certifications and achievements."
+        )
+
+    if "summary" not in text.lower() and "objective" not in text.lower():
+        suggestions.append(
+            "Consider adding a short professional summary."
+        )
+
+    if "project" not in text.lower():
+        suggestions.append(
+            "Add 2-3 academic or personal projects."
+        )
+
+    if "certification" not in text.lower():
+        suggestions.append(
+            "Add relevant certifications if available."
+        )
+
+    if len(skills) < 4:
+        suggestions.append(
+            "Add relevant technical skills that you actually possess."
+        )
+
+    suggestions.append(
+        "Use action-oriented words such as developed, designed, "
+        "implemented and analyzed when describing your work."
+    )
+
+    return suggestions
+
+
+# --------------------------------------------------
+# HOME PAGE
+# --------------------------------------------------
+
+@app.route("/")
+def home():
+
+    return render_template("index.html")
+
+
+# --------------------------------------------------
+# RESUME UPLOAD API
+# --------------------------------------------------
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+
+    if "resume" not in request.files:
+        return jsonify({
+            "error": "No resume uploaded."
+        }), 400
+
+    file = request.files["resume"]
+
+    if file.filename == "":
+        return jsonify({
+            "error": "Please select a resume."
+        }), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({
+            "error": "Only PDF and DOCX files are allowed."
+        }), 400
+
+    filename = secure_filename(file.filename)
+
+    filepath = os.path.join(
+        app.config["UPLOAD_FOLDER"],
+        filename
+    )
+
+    file.save(filepath)
+
+    try:
+
+        resume_text = extract_resume_text(filepath)
+
+        skills = extract_skills(resume_text)
+
+        name = extract_name(resume_text)
+
+        education = extract_education(resume_text)
+
+        results = []
+
+        for job in jobs:
+
+            match = calculate_match(skills, job)
+
+            result = {
+                "id": job["id"],
+                "title": job["title"],
+                "company": job["company"],
+                "location": job["location"],
+                "experience": job["experience"],
+                "salary": job["salary"],
+                "type": job["type"],
+                "score": match["score"],
+                "matched": match["matched"],
+                "missing": match["missing"]
+            }
+
+            results.append(result)
+
+        results.sort(
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        suggestions = resume_suggestions(
+            resume_text,
+            skills
+        )
+
+        return jsonify({
+
+            "name": name,
+
+            "education": education,
+
+            "skills": skills,
+
+            "resume_length": len(resume_text),
+
+            "suggestions": suggestions,
+
+            "jobs": results
+
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "error": "Could not analyze the resume.",
+            "details": str(e)
+        }), 500
+
+
+# --------------------------------------------------
+# CHATBOT
+# --------------------------------------------------
+
+@app.route("/chat", methods=["POST"])
+def chat():
+
+    data = request.get_json()
+
+    question = data.get(
+        "question",
+        ""
+    ).lower()
+
+    skills = data.get(
+        "skills",
+        []
+    )
+
+    jobs_data = data.get(
+        "jobs",
+        []
+    )
+
+    if not question:
+
+        return jsonify({
+            "answer": "Please ask me a career-related question."
+        })
+
+    if "skill" in question:
+
+        answer = (
+            "Based on your resume, your detected skills are: "
+            + ", ".join(skills)
+            + "."
+        )
+
+    elif "job" in question or "career" in question:
+
+        if jobs_data:
+
+            best = jobs_data[0]
+
+            answer = (
+                f"Your strongest current match is "
+                f"{best['title']} at {best['company']} "
+                f"with a match score of {best['score']}%."
+            )
+
+        else:
+
+            answer = (
+                "Upload your resume first so I can recommend "
+                "suitable jobs."
+            )
+
+    elif "learn" in question:
+
+        if jobs_data:
+
+            missing = jobs_data[0]["missing"]
+
+            if missing:
+
+                roadmap = generate_roadmap(missing)
+
+                answer = (
+                    "You should focus on these skills next: "
+                    + ", ".join(roadmap)
+                )
+
+            else:
+
+                answer = (
+                    "Your profile already matches the major "
+                    "requirements of your top job."
+                )
+
+        else:
+
+            answer = "Upload your resume first."
+
+    elif "resume" in question:
+
+        answer = (
+            "Improve your resume by highlighting relevant "
+            "skills, projects, certifications and measurable "
+            "achievements. Keep the content truthful and "
+            "ATS-friendly."
+        )
+
+    else:
+
+        answer = (
+            "I can help you with job matching, skill gaps, "
+            "resume improvement and learning recommendations."
+        )
+
+    return jsonify({
+        "answer": answer
+    })
+
+
+# --------------------------------------------------
+# RUN APPLICATION
+# --------------------------------------------------
+
+if __name__ == "__main__":
+
+    app.run(
+        debug=True,
+        host="127.0.0.1",
+        port=5000
+    )
